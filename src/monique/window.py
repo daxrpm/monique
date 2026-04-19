@@ -954,12 +954,7 @@ class MainWindow(Adw.ApplicationWindow):
         else:
             monitors_conf = hyprland_config_dir() / "monitors.conf"
 
-        # Snapshot actual compositor state before applying (for revert)
-        pre_monitors = self._ipc.get_monitors()
-        self._place_disabled(pre_monitors)
-        self._pre_apply_monitors = pre_monitors
-        self._pre_apply_profile_name = self._base_profile_name
-        self._pre_apply_workspace_rules = list(self._workspace_rules)
+        # Snapshot workspaces (for revert)
         self._ws_snapshot = self._ipc.get_workspaces()
         self._migrated_workspaces: list[tuple[str, str]] = []
 
@@ -1076,18 +1071,9 @@ class MainWindow(Adw.ApplicationWindow):
                 self._toast(f"Revert reload failed: {e}")
                 return
 
-            # Restore pre-apply GUI state directly (no need to re-query compositor)
-            self._monitors = self._pre_apply_monitors
-            self._current_profile_name = self._pre_apply_profile_name
-            self._workspace_rules = self._pre_apply_workspace_rules
-            self._canvas.monitors = self._monitors
-            if self._monitors:
-                self._canvas.selected_index = 0
-                self._update_properties_for_selected()
-            self._update_clamshell_indicators()
-            # Select the pre-apply profile in dropdown by name
-            self._select_profile_by_name(self._pre_apply_profile_name)
-            self._toast("Settings reverted")
+            # Backup restored; GUI left untouched to avoid disrupting user's current
+            # editing/viewing session
+            self._toast("Configuration restored from backup")
         else:
             self._toast("No backup to revert")
 
