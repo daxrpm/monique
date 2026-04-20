@@ -30,6 +30,7 @@ from .utils import (
 import os
 from pathlib import Path
 import time
+from typing import Callable
 
 
 def _detect_ipc() -> HyprlandIPC | NiriIPC | SwayIPC:
@@ -198,7 +199,7 @@ class MainWindow(Adw.ApplicationWindow):
 
         # Save button
         btn_save = Gtk.Button(icon_name="document-save-symbolic", tooltip_text="Save profile")
-        btn_save.connect("clicked", self._on_save_clicked)
+        btn_save.connect("clicked", self._save_then_switch_saved_profile)
         header.pack_start(btn_save)
 
         # Delete profile button
@@ -284,7 +285,7 @@ class MainWindow(Adw.ApplicationWindow):
         """Set up keyboard shortcuts."""
         # Ctrl+S -> save
         action_save = Gio.SimpleAction(name="save")
-        action_save.connect("activate", lambda *_: self._on_save_clicked(None))
+        action_save.connect("activate", lambda *_: self._save_then_switch_saved_profile(None))
         self.add_action(action_save)
 
         # Ctrl+R -> detect
@@ -750,7 +751,7 @@ class MainWindow(Adw.ApplicationWindow):
             self._update_clamshell_indicators()
             self._set_status(f"Loaded profile: {name}")
 
-    def _on_save_clicked(self, btn) -> None:
+    def _on_save_clicked(self, btn, success_cb: Callable[[Profile], None] | None = None, cancel_cb: Callable | None = None) -> None:
         dialog = Adw.AlertDialog()
         dialog.set_heading("Save Profile")
         dialog.add_response("cancel", "Cancel")
@@ -818,15 +819,21 @@ class MainWindow(Adw.ApplicationWindow):
         self._save_entry.connect("changed", lambda e: self._save_radio_new.set_active(True))
 
         dialog.set_extra_child(box)
-        dialog.connect("response", self._on_save_response)
+        dialog.connect("response", lambda d, r: self._on_save_response(d, r, success_cb, cancel_cb))
         dialog.present(self)
 
     def _on_save_new_toggled(self, radio: Gtk.CheckButton) -> None:
         if radio.get_active():
             self._save_entry.grab_focus()
 
-    def _on_save_response(self, dialog: Adw.AlertDialog, response: str) -> None:
+    def _on_save_response(self, dialog: Adw.AlertDialog,
+                              response: str,
+                              success_cb: Callable[[Profile], None] | None = None,
+                              cancel_cb: Callable | None = None
+    ) -> None:
         if response != "save":
+            if cancel_cb:
+                cancel_cb()
             return
 
         # Determine selected name
@@ -849,19 +856,17 @@ class MainWindow(Adw.ApplicationWindow):
             workspace_rules=list(self._workspace_rules),
             last_applied_time=self._last_applied_time,
         )
-        self._profile_mgr.save(profile)
-        self._current_profile_name = name
-        self._inhibit_profile_switch = True
-        self._refresh_profile_list()
-        # Select the saved profile in the dropdown
-        model = self._profile_dropdown.get_model()
-        for i in range(model.get_n_items()):
-            if model.get_string(i) == name:
-                self._profile_dropdown.set_selected(i)
-                break
-        self._inhibit_profile_switch = False
+        try:
+            self._profile_mgr.save(profile)
+        except Exception as e:
+            self._toast(f"An error occurred while saving {name}: {e}")
+            if cancel_cb:
+                cancel_cb()
+            return
         self._dirty = False
         self._toast(f"Profile '{name}' saved")
+        if success_cb:
+            success_cb(profile)
 
     def _on_delete_profile_clicked(self, btn) -> None:
         sel = self._profile_dropdown.get_selected()
@@ -873,6 +878,16 @@ class MainWindow(Adw.ApplicationWindow):
         self._profile_mgr.delete(name)
         self._refresh_profile_list()
         self._toast(f"Profile '{name}' deleted")
+
+    def _save_then_switch_saved_profile(self, btn) -> None:
+        def after_save(profile: Profile) -> None:
+            name = profile.name
+            self._current_profile_name = name
+            self._inhibit_profile_switch = True
+            self._refresh_profile_list()
+            self._select_profile_by_name(name)
+            self._inhibit_profile_switch = False
+        self._on_save_clicked(btn, success_cb=after_save)
 
     def _generate_profile_name(self) -> str:
         """Generate a default profile name from connected monitors."""
@@ -1136,7 +1151,7 @@ class MainWindow(Adw.ApplicationWindow):
         if response == "cancel":
             return
         if response == "save":
-            self._on_save_clicked(None)
+            self._save_then_switch_saved_profile(None)
             # Close after save dialog completes (dirty will be False)
             return
         # discard
