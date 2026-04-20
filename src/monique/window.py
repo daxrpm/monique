@@ -168,6 +168,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._inhibit_profile_switch: bool = False
         self._osd: MonitorOSD | None = None
         self._dirty: bool = False
+        self._current_modified_profile: Profile | None = None
         self._lid_closed: bool = False
         self._app_settings = load_app_settings()
         # time of last successful application of curr config (0 = never applied since change)
@@ -641,6 +642,7 @@ class MainWindow(Adw.ApplicationWindow):
                 parts.append(f"{n_disabled} disabled")
             self._set_status(f"{len(self._monitors)} monitor(s) detected ({', '.join(parts)})")
             self._update_clamshell_indicators()
+            self._current_profile_name = ""
             if select_profile:
                 self._select_matching_profile()
         except Exception as e:
@@ -734,34 +736,54 @@ class MainWindow(Adw.ApplicationWindow):
     def _refresh_profile_list(self) -> None:
         names = self._profile_mgr.list_profiles()
         options = ["(Current)"] + names
+        if self._dirty:
+            insertion_index = 1 # insert after "(Current) by default"
+            if self._current_profile_name in names:
+                insertion_index = options.index(self._current_profile_name) + 1
+            options.insert(insertion_index, self._current_modified_profile.name)
         self._profile_dropdown.set_model(Gtk.StringList.new(options))
         self._profile_dropdown.set_selected(0)
 
     def _on_profile_selected(self, dropdown: Gtk.DropDown, pspec) -> None:
         if self._inhibit_profile_switch:
             return
-        self._last_applied_time = 0.0
-        sel = dropdown.get_selected()
-        if sel == 0:
-            # Current = reload from Hyprland
-            self._load_current_state()
-            return
-        model = dropdown.get_model()
-        name = model.get_string(sel)
-        profile = self._profile_mgr.load(name)
-        if profile:
-            self._monitors = profile.monitors
-            self._place_disabled(self._monitors)
-            self._workspace_rules = profile.workspace_rules
-            self._current_profile_name = profile.name
-            self._base_profile_name = profile.name
-            self._canvas.monitors = self._monitors
-            self._last_applied_time = profile.last_applied_time
-            if self._monitors:
-                self._canvas.selected_index = 0
-                self._update_properties_for_selected()
-            self._update_clamshell_indicators()
-            self._set_status(f"Loaded profile: {name}")
+
+        def switch_to_selected():
+            sel = dropdown.get_selected()
+            self._last_applied_time = 0.0
+            self._dirty = False
+            self._current_modified_profile = None
+            if sel == 0:
+                self._load_current_state()
+                return
+            model = dropdown.get_model()
+            name = model.get_string(sel)
+            profile = self._profile_mgr.load(name)
+            if profile:
+                self._load_profile(profile)
+
+        def on_cancel(*_):
+            self._dirty = True # Enforce dirty to let us stay on the unsaved profile
+            return self._select_profile_by_name(self._current_modified_profile.name)
+
+        def remove_modified_profile(*_):
+            # update dropdown list to remove modified profile
+            new_profile = dropdown.get_selected_item().get_string()
+            self._inhibit_profile_switch = True
+            self._refresh_profile_list()
+            self._select_profile_by_name(new_profile)
+            self._inhibit_profile_switch = False
+            switch_to_selected()
+
+        if self._dirty:
+            # disables switching to saved profile if user saved the modification
+            self._on_switch_profile_request(
+                on_save=lambda: self._on_save_clicked(None, cancel_cb=on_cancel, success_cb=remove_modified_profile),
+                on_cancel=on_cancel,
+                on_discard=remove_modified_profile,
+            )
+        else:
+            switch_to_selected()
 
     def _on_save_clicked(self, btn, success_cb: Callable[[Profile], None] | None = None, cancel_cb: Callable | None = None) -> None:
         dialog = Adw.AlertDialog()
@@ -876,20 +898,11 @@ class MainWindow(Adw.ApplicationWindow):
                 cancel_cb()
             return
         self._dirty = False
+        self._current_modified_profile = None
         self._toast(f"Profile '{name}' saved")
         if success_cb:
             success_cb(profile)
 
-    def _on_delete_profile_clicked(self, btn) -> None:
-        sel = self._profile_dropdown.get_selected()
-        if sel == 0:
-            self._toast("Cannot delete (Current)")
-            return
-        model = self._profile_dropdown.get_model()
-        name = model.get_string(sel)
-        self._profile_mgr.delete(name)
-        self._refresh_profile_list()
-        self._toast(f"Profile '{name}' deleted")
 
     def _save_then_switch_saved_profile(self, btn) -> None:
         def after_save(profile: Profile) -> None:
@@ -897,9 +910,29 @@ class MainWindow(Adw.ApplicationWindow):
             self._current_profile_name = name
             self._inhibit_profile_switch = True
             self._refresh_profile_list()
+            # Select the saved profile in the dropdown
             self._select_profile_by_name(name)
             self._inhibit_profile_switch = False
         self._on_save_clicked(btn, success_cb=after_save)
+
+
+    def _on_delete_profile_clicked(self, btn) -> None:
+        sel = self._profile_dropdown.get_selected()
+        if sel == 0:
+            self._toast("Cannot delete (Current)")
+            return
+        if self._dirty:
+            # Discard changes
+            self._toast("Discarding changes")
+            self._dirty = False
+            self._current_modified_profile = None
+            self._refresh_profile_list()
+            return
+        model = self._profile_dropdown.get_model()
+        name = model.get_string(sel)
+        self._profile_mgr.delete(name)
+        self._refresh_profile_list()
+        self._toast(f"Profile '{name}' deleted")
 
     def _generate_profile_name(self) -> str:
         """Generate a default profile name from connected monitors."""
@@ -912,16 +945,20 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _mark_dirty(self) -> None:
         """Switch dropdown to (Current) when the user modifies anything."""
-        self._dirty = True
         self._last_applied_time = 0.0 # reset last applied time as config has changed
-        if self._inhibit_profile_switch:
+        if self._dirty:
             return
-        sel = self._profile_dropdown.get_selected()
-        if sel != 0:
-            self._inhibit_profile_switch = True
-            self._profile_dropdown.set_selected(0)
-            self._inhibit_profile_switch = False
-        self._current_profile_name = ""
+        
+        self._dirty = True
+        self._current_modified_profile = Profile(
+            name=self._profile_dropdown.get_model().get_string(self._profile_dropdown.get_selected()) + "*",
+            monitors=list(self._monitors),
+            workspace_rules=list(self._workspace_rules),
+        )
+        self._inhibit_profile_switch = True
+        self._refresh_profile_list()
+        self._inhibit_profile_switch = False
+        self._select_profile_by_name(self._current_modified_profile.name)
 
     # ── Canvas Events ────────────────────────────────────────────────
 
@@ -963,7 +1000,10 @@ class MainWindow(Adw.ApplicationWindow):
     # ── Detect ───────────────────────────────────────────────────────
 
     def _on_detect_clicked(self, btn) -> None:
-        self._load_current_state()
+        # switch to (Current) and invoke check unsaved changed items before
+        # loading from IPC to prevent losing unsaved changes without warning
+        self._profile_dropdown.set_selected(0)
+
 
     # ── Apply ────────────────────────────────────────────────────────
 
@@ -1146,13 +1186,16 @@ class MainWindow(Adw.ApplicationWindow):
         on_cancel: Callable | None = None,
         on_discard: Callable | None = None,
     ) -> bool:
-        """Check for unsaved changes and prompt user to save/discard/cancel."""
+        """If there are unsaved changes, show a dialog asking the user to save/discard/cancel
+        and return True and block the GUI action until user responds.\n
+        Otherwise return False indicating there are no unsaved changes."""
         if not self._dirty:
-            return False
-
+            return False  # Ignore if no unsaved changes
+    
         dialog = Adw.AlertDialog()
         dialog.set_heading("Unsaved Changes")
         dialog.set_body(body_text)
+
         dialog.add_response("discard", "Discard")
         dialog.set_response_appearance("discard", Adw.ResponseAppearance.DESTRUCTIVE)
         dialog.add_response("cancel", "Cancel")
@@ -1161,6 +1204,7 @@ class MainWindow(Adw.ApplicationWindow):
         dialog.set_default_response("save")
         dialog.set_close_response("cancel")
 
+        # Create handler with closures
         def on_response(_, response: str):
             if response == "cancel":
                 if on_cancel:
@@ -1170,20 +1214,32 @@ class MainWindow(Adw.ApplicationWindow):
                 if on_save:
                     on_save()
                 return
-            self._dirty = False
+            self._dirty = False  # No longer dirty since user chose to discard
             if on_discard:
                 on_discard()
-
         dialog.connect("response", on_response)
         dialog.present(self)
-        return True
+        return True  # block action until user responds
 
-    # ── Close ──────────────────────────────────────────────────────────
+    def _on_switch_profile_request(
+        self,
+        on_save: callable | None = None,
+        on_cancel: callable | None = None,
+        on_discard: callable | None = None,
+    ) -> bool:
+        return self._check_unsaved_changes(
+            "Save changes before switching profiles?",
+            on_save=on_save,
+            on_cancel=on_cancel,
+            on_discard=on_discard,
+        )
+
+    # ── Close ─────────────────────────────────────────────────────────
 
     def _on_close_request(self, window: Adw.ApplicationWindow) -> bool:
         def save_and_close():
             self._on_save_clicked(None, success_cb=lambda _: self.close())
-
+        
         return self._check_unsaved_changes(
             "Save changes before exiting?",
             on_save=save_and_close,
