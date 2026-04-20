@@ -682,6 +682,21 @@ class MainWindow(Adw.ApplicationWindow):
         else:
             self._props.update_from_monitor(None)
 
+    def _load_profile(self, profile: Profile) -> None:
+        """Load a profile into the UI."""
+        self._monitors = profile.monitors
+        self._place_disabled(self._monitors)
+        self._workspace_rules = profile.workspace_rules
+        self._current_profile_name = profile.name
+        self._base_profile_name = profile.name
+        self._canvas.monitors = self._monitors
+        self._last_applied_time = profile.last_applied_time
+        if self._monitors:
+            self._canvas.selected_index = 0
+            self._update_properties_for_selected()
+        self._update_clamshell_indicators()
+        self._set_status(f"Loaded profile: {profile.name}")
+
     def _select_matching_profile(self) -> None:
         """If the current monitor layout matches a saved profile, select it."""
         current_fp = sorted(m.description for m in self._monitors if m.description)
@@ -693,11 +708,8 @@ class MainWindow(Adw.ApplicationWindow):
             if model.get_string(i) == match.name:
                 self._inhibit_profile_switch = True
                 self._profile_dropdown.set_selected(i)
-                self._current_profile_name = match.name
-                self._base_profile_name = match.name
-                self._workspace_rules = match.workspace_rules
                 self._inhibit_profile_switch = False
-                self._last_applied_time = match.last_applied_time
+                self._load_profile(match)
                 break
 
     def _select_profile_by_name(self, name: str) -> None:
