@@ -1139,15 +1139,20 @@ class MainWindow(Adw.ApplicationWindow):
                 return gdk_mon
         return None
 
-    # ── Close ─────────────────────────────────────────────────────────
-
-    def _on_close_request(self, window: Adw.ApplicationWindow) -> bool:
+    def _check_unsaved_changes(
+        self,
+        body_text: str,
+        on_save: Callable | None = None,
+        on_cancel: Callable | None = None,
+        on_discard: Callable | None = None,
+    ) -> bool:
+        """Check for unsaved changes and prompt user to save/discard/cancel."""
         if not self._dirty:
-            return False  # allow close
+            return False
 
         dialog = Adw.AlertDialog()
         dialog.set_heading("Unsaved Changes")
-        dialog.set_body("Save changes before closing?")
+        dialog.set_body(body_text)
         dialog.add_response("discard", "Discard")
         dialog.set_response_appearance("discard", Adw.ResponseAppearance.DESTRUCTIVE)
         dialog.add_response("cancel", "Cancel")
@@ -1155,20 +1160,35 @@ class MainWindow(Adw.ApplicationWindow):
         dialog.set_response_appearance("save", Adw.ResponseAppearance.SUGGESTED)
         dialog.set_default_response("save")
         dialog.set_close_response("cancel")
-        dialog.connect("response", self._on_close_dialog_response)
-        dialog.present(self)
-        return True  # block close for now
 
-    def _on_close_dialog_response(self, dialog: Adw.AlertDialog, response: str) -> None:
-        if response == "cancel":
-            return
-        if response == "save":
-            self._save_then_switch_saved_profile(None)
-            # Close after save dialog completes (dirty will be False)
-            return
-        # discard
-        self._dirty = False
-        self.close()
+        def on_response(_, response: str):
+            if response == "cancel":
+                if on_cancel:
+                    on_cancel()
+                return
+            if response == "save":
+                if on_save:
+                    on_save()
+                return
+            self._dirty = False
+            if on_discard:
+                on_discard()
+
+        dialog.connect("response", on_response)
+        dialog.present(self)
+        return True
+
+    # ── Close ──────────────────────────────────────────────────────────
+
+    def _on_close_request(self, window: Adw.ApplicationWindow) -> bool:
+        def save_and_close():
+            self._on_save_clicked(None, success_cb=lambda _: self.close())
+
+        return self._check_unsaved_changes(
+            "Save changes before exiting?",
+            on_save=save_and_close,
+            on_discard=self.close,
+        )
 
     # ── Helpers ──────────────────────────────────────────────────────
 
