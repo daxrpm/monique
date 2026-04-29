@@ -1223,9 +1223,9 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _on_switch_profile_request(
         self,
-        on_save: callable | None = None,
-        on_cancel: callable | None = None,
-        on_discard: callable | None = None,
+        on_save: Callable | None = None,
+        on_cancel: Callable | None = None,
+        on_discard: Callable | None = None,
     ) -> bool:
         return self._check_unsaved_changes(
             "Save changes before switching profiles?",
