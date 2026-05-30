@@ -254,6 +254,7 @@ Monitor config files are written to the compositor's config directory:
 - **Niri:** `~/.config/niri/monitors.kdl`
 
 To use a custom output directory, set it in **Preferences → Config Output** or pass `--config-dir` on the command line.
+For Hyprland, **Preferences → Config Output** also supports explicit file targets for the monitors and workspaces files. These are stored in `settings.json` as `hyprland_monitors_path` and `hyprland_workspaces_path`.
 
 ## Project structure
 

@@ -58,6 +58,16 @@ def _config_dir_override() -> Path | None:
     return None
 
 
+def _settings_path_override(key: str) -> Path | None:
+    """Return a configured file path override unless --config-dir is active."""
+    if _runtime_config_dir:
+        return None
+    override = load_app_settings().get(key)
+    if override:
+        return Path(override).expanduser()
+    return None
+
+
 def sway_config_dir() -> Path:
     """Return the Sway config directory."""
     override = _config_dir_override()
@@ -78,15 +88,23 @@ def hyprland_config_dir() -> Path:
 
 def hyprland_uses_lua_config() -> bool:
     """Return True when Hyprland should receive Lua monitor config."""
-    override = _config_dir_override()
-    if override:
+    if _runtime_config_dir:
         return False
+    monitors_override = _settings_path_override("hyprland_monitors_path")
+    workspaces_override = _settings_path_override("hyprland_workspaces_path")
+    if monitors_override and monitors_override.suffix == ".lua":
+        return True
+    if workspaces_override and workspaces_override.suffix == ".lua":
+        return True
     conf_dir = hyprland_config_dir()
     return (conf_dir / "hyprland.lua").exists()
 
 
 def hyprland_monitors_path() -> Path:
     """Return the Hyprland monitor config file Monique should write."""
+    override = _settings_path_override("hyprland_monitors_path")
+    if override:
+        return override
     conf_dir = hyprland_config_dir()
     if hyprland_uses_lua_config():
         return conf_dir / "monitors.lua"
@@ -95,6 +113,9 @@ def hyprland_monitors_path() -> Path:
 
 def hyprland_workspaces_path() -> Path:
     """Return the Hyprland workspace config file Monique should write."""
+    override = _settings_path_override("hyprland_workspaces_path")
+    if override:
+        return override
     conf_dir = hyprland_config_dir()
     if hyprland_uses_lua_config():
         return conf_dir / "workspaces.lua"
@@ -103,9 +124,16 @@ def hyprland_workspaces_path() -> Path:
 
 def hyprland_managed_paths() -> list[Path]:
     """Return Hyprland config files managed by Monique."""
-    if hyprland_uses_lua_config():
-        return [hyprland_workspaces_path(), hyprland_monitors_path()]
-    return [hyprland_monitors_path()]
+    paths = (
+        [hyprland_workspaces_path(), hyprland_monitors_path()]
+        if hyprland_uses_lua_config()
+        else [hyprland_monitors_path()]
+    )
+    result: list[Path] = []
+    for path in paths:
+        if path not in result:
+            result.append(path)
+    return result
 
 
 def niri_config_dir() -> Path:

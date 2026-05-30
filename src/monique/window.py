@@ -384,6 +384,26 @@ class MainWindow(Adw.ApplicationWindow):
         entry_config_dir.connect("changed", self._on_config_dir_changed)
         grp_out.add(entry_config_dir)
 
+        entry_hypr_monitors = Adw.EntryRow(
+            title="Hyprland monitors file",
+        )
+        entry_hypr_monitors.set_text(self._app_settings.get("hyprland_monitors_path", ""))
+        entry_hypr_monitors.connect(
+            "changed",
+            lambda row: self._on_path_setting_changed(row, "hyprland_monitors_path"),
+        )
+        grp_out.add(entry_hypr_monitors)
+
+        entry_hypr_workspaces = Adw.EntryRow(
+            title="Hyprland workspaces file",
+        )
+        entry_hypr_workspaces.set_text(self._app_settings.get("hyprland_workspaces_path", ""))
+        entry_hypr_workspaces.connect(
+            "changed",
+            lambda row: self._on_path_setting_changed(row, "hyprland_workspaces_path"),
+        )
+        grp_out.add(entry_hypr_workspaces)
+
         # ── Display Manager group ──
         grp_dm = Adw.PreferencesGroup(
             title="Display Manager",
@@ -501,6 +521,15 @@ class MainWindow(Adw.ApplicationWindow):
             self._app_settings["config_dir"] = text
         else:
             self._app_settings.pop("config_dir", None)
+        save_app_settings(self._app_settings)
+
+    def _on_path_setting_changed(self, row: Adw.EntryRow, key: str) -> None:
+        """Handle a file path entry change in preferences."""
+        text = row.get_text().strip()
+        if text:
+            self._app_settings[key] = text
+        else:
+            self._app_settings.pop(key, None)
         save_app_settings(self._app_settings)
 
     def _on_clamshell_switch_changed(self, row: Adw.SwitchRow, pspec) -> None:
