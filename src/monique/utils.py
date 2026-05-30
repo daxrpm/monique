@@ -46,7 +46,7 @@ def is_niri_installed() -> bool:
 
 
 def _config_dir_override() -> Path | None:
-    """Restituisce il percorso personalizzato per monitors.conf, se configurato.
+    """Restituisce il percorso personalizzato per la config monitor, se configurato.
 
     Priorità: --config-dir (runtime) > settings.json > default del compositor.
     """
@@ -74,6 +74,38 @@ def hyprland_config_dir() -> Path:
         return override
     base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
     return base / "hypr"
+
+
+def hyprland_uses_lua_config() -> bool:
+    """Return True when Hyprland should receive Lua monitor config."""
+    override = _config_dir_override()
+    if override:
+        return False
+    conf_dir = hyprland_config_dir()
+    return (conf_dir / "hyprland.lua").exists()
+
+
+def hyprland_monitors_path() -> Path:
+    """Return the Hyprland monitor config file Monique should write."""
+    conf_dir = hyprland_config_dir()
+    if hyprland_uses_lua_config():
+        return conf_dir / "monitors.lua"
+    return conf_dir / "monitors.conf"
+
+
+def hyprland_workspaces_path() -> Path:
+    """Return the Hyprland workspace config file Monique should write."""
+    conf_dir = hyprland_config_dir()
+    if hyprland_uses_lua_config():
+        return conf_dir / "workspaces.lua"
+    return conf_dir / "monitors.conf"
+
+
+def hyprland_managed_paths() -> list[Path]:
+    """Return Hyprland config files managed by Monique."""
+    if hyprland_uses_lua_config():
+        return [hyprland_workspaces_path(), hyprland_monitors_path()]
+    return [hyprland_monitors_path()]
 
 
 def niri_config_dir() -> Path:

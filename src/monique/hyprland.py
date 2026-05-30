@@ -11,7 +11,9 @@ from typing import AsyncIterator
 from .models import MonitorConfig, Profile, WorkspaceRule
 from .utils import (
     hyprland_runtime_dir,
-    hyprland_config_dir,
+    hyprland_monitors_path,
+    hyprland_workspaces_path,
+    hyprland_uses_lua_config,
     is_sway_installed,
     sway_config_dir,
     is_niri_installed,
@@ -187,16 +189,25 @@ class HyprlandIPC:
         update_greetd: bool = True, use_description: bool = False,
     ) -> None:
         """Write monitor config and reload Hyprland."""
-        conf_dir = hyprland_config_dir()
-        monitors_conf = conf_dir / "monitors.conf"
+        monitors_conf = hyprland_monitors_path()
 
         # Backup existing
         backup_file(monitors_conf)
 
         # Write new config (monitorv2 blocks for Hyprland >= 0.50)
-        write_text(monitors_conf, profile.generate_config(
-            use_description=use_description, use_v2=self.supports_v2,
-        ))
+        if hyprland_uses_lua_config():
+            write_text(monitors_conf, profile.generate_hyprland_lua_config(
+                use_description=use_description, include_workspace_rules=False,
+            ))
+            workspaces_conf = hyprland_workspaces_path()
+            backup_file(workspaces_conf)
+            write_text(workspaces_conf, profile.generate_hyprland_lua_workspaces_config(
+                use_description=use_description,
+            ))
+        else:
+            write_text(monitors_conf, profile.generate_config(
+                use_description=use_description, use_v2=self.supports_v2,
+            ))
 
         # Also write Sway config if Sway is installed
         if is_sway_installed():

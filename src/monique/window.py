@@ -16,7 +16,10 @@ from .hyprland import HyprlandIPC
 from .niri import NiriIPC
 from .sway import SwayIPC
 from .utils import (
-    hyprland_config_dir,
+    hyprland_managed_paths,
+    hyprland_monitors_path,
+    hyprland_workspaces_path,
+    hyprland_uses_lua_config,
     niri_config_dir,
     backup_file,
     restore_backup,
@@ -370,7 +373,7 @@ class MainWindow(Adw.ApplicationWindow):
         # ── Output Directory group ──
         grp_out = Adw.PreferencesGroup(
             title="Config Output",
-            description="Where monitors.conf is written (leave empty for compositor default)",
+            description="Where monitor config is written (leave empty for compositor default)",
         )
         page.add(grp_out)
 
@@ -611,18 +614,35 @@ class MainWindow(Adw.ApplicationWindow):
     # ── Data Loading ─────────────────────────────────────────────────
 
     def _load_workspace_rules_from_conf(self) -> list[WorkspaceRule]:
-        """Read workspace rules from the monitors.conf file we wrote."""
+        """Read workspace rules from the monitor config file we wrote."""
         # Niri doesn't support Hyprland-style workspace rules
         if isinstance(self._ipc, NiriIPC):
             return []
-        conf = hyprland_config_dir() / "monitors.conf"
+        conf = hyprland_workspaces_path()
+        if not conf.exists():
+            if hyprland_uses_lua_config():
+                legacy_conf = hyprland_monitors_path()
+                if legacy_conf.exists():
+                    conf = legacy_conf
+                else:
+                    return []
+            else:
+                return []
         if not conf.exists():
             return []
         rules: list[WorkspaceRule] = []
-        for line in conf.read_text(encoding="utf-8").splitlines():
-            rule = WorkspaceRule.from_hyprland_line(line)
-            if rule:
-                rules.append(rule)
+        text = conf.read_text(encoding="utf-8")
+        if conf.suffix == ".lua":
+            import re
+            for match in re.finditer(r"hl\.workspace_rule\(\{(.*?)\}\)", text, re.S):
+                rule = WorkspaceRule.from_hyprland_lua_block(match.group(1))
+                if rule:
+                    rules.append(rule)
+        else:
+            for line in text.splitlines():
+                rule = WorkspaceRule.from_hyprland_line(line)
+                if rule:
+                    rules.append(rule)
         return rules
 
     def _load_current_state(self, *, select_profile: bool = False) -> None:
@@ -1017,16 +1037,17 @@ class MainWindow(Adw.ApplicationWindow):
 
         # Determine config path based on compositor
         if isinstance(self._ipc, NiriIPC):
-            monitors_conf = niri_config_dir() / "monitors.kdl"
+            managed_paths = [niri_config_dir() / "monitors.kdl"]
         else:
-            monitors_conf = hyprland_config_dir() / "monitors.conf"
+            managed_paths = hyprland_managed_paths()
 
         # Snapshot workspaces (for revert)
         self._ws_snapshot = self._ipc.get_workspaces()
         self._migrated_workspaces: list[tuple[str, str]] = []
 
         # Backup
-        backup_file(monitors_conf)
+        for path in managed_paths:
+            backup_file(path)
 
         try:
             update_sddm = self._app_settings.get("update_sddm", True)
@@ -1039,7 +1060,8 @@ class MainWindow(Adw.ApplicationWindow):
             self._set_status("Configuration applied")
         except Exception as e:
             self._toast(f"Apply failed: {e}")
-            restore_backup(monitors_conf)
+            for path in managed_paths:
+                restore_backup(path)
             return
 
         # Migrate orphaned workspaces if setting is on (Niri handles this natively)
@@ -1047,7 +1069,7 @@ class MainWindow(Adw.ApplicationWindow):
             self._migrate_orphaned_workspaces(profile)
 
         # Show confirmation dialog with countdown
-        self._show_confirm_dialog(monitors_conf)
+        self._show_confirm_dialog(managed_paths)
 
     def _migrate_orphaned_workspaces(self, profile: Profile) -> None:
         """Move workspaces from disabled/removed monitors to the primary monitor."""
@@ -1069,7 +1091,7 @@ class MainWindow(Adw.ApplicationWindow):
                 except Exception:
                     pass
 
-    def _show_confirm_dialog(self, conf_path) -> None:
+    def _show_confirm_dialog(self, conf_paths) -> None:
         self._confirm_remaining = CONFIRM_TIMEOUT
         dialog = Adw.AlertDialog()
         dialog.set_heading("Keep Settings?")
@@ -1082,7 +1104,7 @@ class MainWindow(Adw.ApplicationWindow):
         dialog.set_close_response("revert")
 
         self._confirm_dialog = dialog
-        self._confirm_conf_path = conf_path
+        self._confirm_conf_paths = list(conf_paths)
 
         # Start countdown
         self._confirm_timer_id = GLib.timeout_add(1000, self._confirm_tick)
@@ -1106,9 +1128,10 @@ class MainWindow(Adw.ApplicationWindow):
 
         if response == "keep":
             # Remove backup
-            bak = self._confirm_conf_path.with_suffix(self._confirm_conf_path.suffix + ".bak")
-            if bak.exists():
-                bak.unlink()
+            for path in self._confirm_conf_paths:
+                bak = path.with_suffix(path.suffix + ".bak")
+                if bak.exists():
+                    bak.unlink()
             self._migrated_workspaces = []
             self._base_profile_name = self._current_profile_name
             self._last_applied_time = time.time()
@@ -1131,7 +1154,10 @@ class MainWindow(Adw.ApplicationWindow):
                 pass
         self._migrated_workspaces = []
 
-        if restore_backup(self._confirm_conf_path):
+        restored = False
+        for path in self._confirm_conf_paths:
+            restored = restore_backup(path) or restored
+        if restored:
             try:
                 self._ipc.reload()
             except Exception as e:

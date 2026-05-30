@@ -249,7 +249,7 @@ All configuration is stored in `~/.config/monique/`:
 ```
 
 Monitor config files are written to the compositor's config directory:
-- **Hyprland:** `~/.config/hypr/monitors.conf`
+- **Hyprland:** `~/.config/hypr/monitors.conf`, or `~/.config/hypr/monitors.lua` + `~/.config/hypr/workspaces.lua` when a Lua config is detected
 - **Sway:** `~/.config/sway/monitors.conf`
 - **Niri:** `~/.config/niri/monitors.kdl`
 

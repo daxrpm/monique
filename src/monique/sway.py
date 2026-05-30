@@ -12,7 +12,9 @@ from typing import AsyncIterator
 from .models import MonitorConfig, Profile
 from .utils import (
     is_hyprland_installed,
-    hyprland_config_dir,
+    hyprland_monitors_path,
+    hyprland_workspaces_path,
+    hyprland_uses_lua_config,
     sway_config_dir,
     is_niri_installed,
     niri_config_dir,
@@ -119,9 +121,19 @@ class SwayIPC:
 
         # Also write Hyprland config if Hyprland is installed
         if is_hyprland_installed():
-            hypr_conf = hyprland_config_dir() / "monitors.conf"
+            hypr_conf = hyprland_monitors_path()
             backup_file(hypr_conf)
-            write_text(hypr_conf, profile.generate_config(use_description=use_description))
+            if hyprland_uses_lua_config():
+                write_text(hypr_conf, profile.generate_hyprland_lua_config(
+                    use_description=use_description, include_workspace_rules=False,
+                ))
+                hypr_ws_conf = hyprland_workspaces_path()
+                backup_file(hypr_ws_conf)
+                write_text(hypr_ws_conf, profile.generate_hyprland_lua_workspaces_config(
+                    use_description=use_description,
+                ))
+            else:
+                write_text(hypr_conf, profile.generate_config(use_description=use_description))
 
         # Also write Niri config if Niri is installed
         if is_niri_installed():
